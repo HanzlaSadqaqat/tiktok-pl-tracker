@@ -6,6 +6,8 @@ import {
   PAYMENT_METHODS,
   PAYMENT_STATUSES,
   PAYOUT_STATUSES,
+  ROLES,
+  type Role,
   TAX_TREATMENTS,
 } from "./constants";
 import type { AppSettings, ExpenseInput, OrderInput } from "./types";
@@ -76,3 +78,35 @@ export const ExpenseModel: Model<ExpenseInput> =
   (mongoose.models.Expense as Model<ExpenseInput>) ?? mongoose.model<ExpenseInput>("Expense", ExpenseSchema);
 export const SettingsModel: Model<SettingsDoc> =
   (mongoose.models.Settings as Model<SettingsDoc>) ?? mongoose.model<SettingsDoc>("Settings", SettingsSchema);
+
+export interface UserDoc {
+  name: string;
+  email: string;
+  passwordHash: string;
+  role: Role;
+  active: boolean;
+  /** Bumped to sign the user out everywhere (password change, reset, deactivation). */
+  sessionVersion: number;
+  failedLogins: number;
+  /** Epoch ms until which sign-in is blocked after too many wrong passwords. */
+  lockedUntil: number;
+  lastLoginAt: Date | null;
+  createdAt?: Date;
+}
+
+const UserSchema = new Schema<UserDoc>(
+  {
+    name: { type: String, required: true, trim: true },
+    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    passwordHash: { type: String, required: true },
+    role: { type: String, enum: ROLES, required: true, default: "viewer" },
+    active: { type: Boolean, default: true },
+    sessionVersion: { type: Number, default: 0 },
+    failedLogins: { type: Number, default: 0 },
+    lockedUntil: { type: Number, default: 0 },
+    lastLoginAt: { type: Date, default: null },
+  },
+  { timestamps: true },
+);
+
+export const UserModel: Model<UserDoc> = (mongoose.models.User as Model<UserDoc>) ?? mongoose.model<UserDoc>("User", UserSchema);

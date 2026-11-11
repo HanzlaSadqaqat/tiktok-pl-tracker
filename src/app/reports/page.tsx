@@ -4,6 +4,7 @@ import { MonthlyTrendChart } from "@/components/Charts";
 import { PageHeader } from "@/components/ui";
 import { monthlyRows, type MonthRow } from "@/lib/calc";
 import { loadAll } from "@/lib/data";
+import { requirePage } from "@/lib/session";
 import { int, money, pct, tone } from "@/lib/format";
 
 export const metadata: Metadata = { title: "Monthly Reports" };
@@ -40,6 +41,7 @@ function cell(v: number | null, kind: string) {
 
 export default async function ReportsPage({ searchParams }: { searchParams: SP }) {
   const sp = await searchParams;
+  await requirePage();
   const { orders, expenses, settings, today } = await loadAll();
   const thisYear = Number(today.slice(0, 4));
   const raw = Number(Array.isArray(sp.year) ? sp.year[0] : sp.year);

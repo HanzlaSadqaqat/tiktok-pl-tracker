@@ -28,7 +28,9 @@ export function handle<A extends unknown[]>(fn: (...args: A) => Promise<Response
       if (err instanceof HttpError) return NextResponse.json({ error: err.message }, { status: err.status });
       if (err instanceof ZodError) return NextResponse.json({ error: formatZodError(err) }, { status: 400 });
       if (typeof err === "object" && err && "code" in err && (err as { code: unknown }).code === 11000) {
-        return NextResponse.json({ error: "An order with this Order ID already exists" }, { status: 409 });
+        const isEmail = "keyPattern" in err && typeof err.keyPattern === "object" && err.keyPattern !== null && "email" in err.keyPattern;
+        const message = isEmail ? "A user with this email already exists" : "An order with this Order ID already exists";
+        return NextResponse.json({ error: message }, { status: 409 });
       }
       console.error(err);
       const message = err instanceof Error && err.message.startsWith("MONGODB_URI") ? err.message : "Something went wrong";

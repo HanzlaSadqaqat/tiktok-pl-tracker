@@ -5,6 +5,7 @@ import { Card, MetricRow, PageHeader } from "@/components/ui";
 import { monthlyRows, summarize } from "@/lib/calc";
 import { EXPENSE_CATEGORIES, ORDER_STATUSES, PERIODS, type Period } from "@/lib/constants";
 import { loadAll } from "@/lib/data";
+import { requirePage } from "@/lib/session";
 import { int, money, niceDate, pct } from "@/lib/format";
 import { addMonths, monthStart, resolvePeriod } from "@/lib/periods";
 
@@ -17,6 +18,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: SP
   const sp = await searchParams;
   const raw = one(sp.period);
   const period: Period = PERIODS.includes(raw as Period) ? (raw as Period) : "This Month";
+  await requirePage();
   const { orders, expenses, settings, today } = await loadAll();
   const { start, end } = resolvePeriod(period, today, one(sp.start), one(sp.end));
   const s = summarize(orders, expenses, start, end);

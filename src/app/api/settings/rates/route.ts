@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { HttpError, handle } from "@/lib/api";
+import { requireUser } from "@/lib/session";
 import { CURRENCIES } from "@/lib/constants";
 import { getSettings, saveSettings } from "@/lib/repo";
 
 /** Loads current exchange rates for the listed currencies into Settings. Manual rates are replaced. */
 export const POST = handle(async () => {
+  await requireUser("admin");
   const settings = await getSettings();
   const base = settings.reportingCurrency;
   const res = await fetch(`https://open.er-api.com/v6/latest/${encodeURIComponent(base)}`, { cache: "no-store" });

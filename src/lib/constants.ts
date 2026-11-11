@@ -61,3 +61,16 @@ export const CURRENCIES = [
   "USD", "GBP", "EUR", "PKR", "AED", "SAR", "CAD", "AUD",
   "MYR", "SGD", "PHP", "THB", "VND", "IDR", "MXN",
 ] as const;
+
+/** Account roles, from most to least access. "admin" manages users and settings. */
+export const ROLES = ["admin", "editor", "viewer"] as const;
+export type Role = (typeof ROLES)[number];
+export const ROLE_LABELS: Record<Role, string> = {
+  admin: "Admin",
+  editor: "User · can add & edit",
+  viewer: "User · view only",
+};
+const ROLE_RANK: Record<Role, number> = { viewer: 0, editor: 1, admin: 2 };
+/** True when `role` has at least the access of `needed`. */
+export const hasRole = (role: Role, needed: Role) => ROLE_RANK[role] >= ROLE_RANK[needed];
+export const MIN_PASSWORD_LENGTH = 8;

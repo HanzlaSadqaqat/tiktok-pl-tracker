@@ -1,22 +1,22 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
-import { handle, parseBody } from "@/lib/api";
-import { SESSION_COOKIE, SESSION_DAYS, authEnabled, checkPassword, createSessionToken } from "@/lib/auth";
+import { HttpError, handle, parseBody } from "@/lib/api";
+import { sessionSecretConfigured } from "@/lib/auth";
+import { setSessionCookie } from "@/lib/session";
+import { authenticate, toPublicUser } from "@/lib/users";
+import { loginSchema } from "@/lib/validation";
 
 export const POST = handle(async (req: Request) => {
-  if (!authEnabled()) return NextResponse.json({ ok: true });
-  const { password } = await parseBody(req, z.object({ password: z.string().max(500) }));
-  if (!(await checkPassword(password))) {
-    await new Promise((r) => setTimeout(r, 500));
-    return NextResponse.json({ error: "Wrong password" }, { status: 401 });
+  if (!sessionSecretConfigured()) throw new HttpError(500, "SESSION_SECRET is not set. Add a random string of at least 32 characters to .env.local.");
+  const { email, password } = await parseBody(req, loginSchema);
+  let user;
+  try {
+    user = await authenticate(email, password);
+  } catch (err) {
+    // Slow down guessing.
+    if (err instanceof HttpError && err.status === 401) await new Promise((r) => setTimeout(r, 500));
+    throw err;
   }
-  const res = NextResponse.json({ ok: true });
-  res.cookies.set(SESSION_COOKIE, await createSessionToken(), {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: SESSION_DAYS * 86400,
-  });
+  const res = NextResponse.json({ user: toPublicUser(user) });
+  await setSessionCookie(res, user._id.toString(), user.sessionVersion);
   return res;
 });

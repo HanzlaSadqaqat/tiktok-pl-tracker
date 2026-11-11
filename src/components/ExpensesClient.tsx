@@ -10,7 +10,7 @@ import { ImportCsv } from "./ImportCsv";
 import { Modal } from "./Modal";
 import { Badge, Card, Empty, MetricRow, PageHeader } from "./ui";
 
-export function ExpensesClient({ today }: { today: string }) {
+export function ExpensesClient({ today, canEdit }: { today: string; canEdit: boolean }) {
   const [expenses, setExpenses] = useState<ExpenseWithCalc[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -83,10 +83,12 @@ export function ExpensesClient({ today }: { today: string }) {
         title="Business Expenses"
         subtitle="Costs not tied to a single order, such as Kalodata, Shopify, software and staff. They reduce net profit, never individual orders."
         actions={
+          canEdit && (
           <>
             <ImportCsv endpoint="/api/expenses/import" tabName="Business Expenses" onDone={load} />
             <button className="btn-primary" onClick={() => setEditing("new")} disabled={!settings}>+ Add expense</button>
           </>
+          )
         }
       />
 
@@ -184,8 +186,12 @@ export function ExpensesClient({ today }: { today: string }) {
                   <td>{e.paymentMethod}</td>
                   <td className="num text-right font-semibold">{money(e.amountReporting)}</td>
                   <td className="text-right">
-                    <button className="mr-2 text-xs font-medium text-accent hover:underline" onClick={() => setEditing(e)}>Edit</button>
-                    <button className="text-xs font-medium text-neg hover:underline" onClick={() => remove(e)}>Delete</button>
+                    {canEdit && (
+                      <>
+                      <button className="mr-2 text-xs font-medium text-accent hover:underline" onClick={() => setEditing(e)}>Edit</button>
+                      <button className="text-xs font-medium text-neg hover:underline" onClick={() => remove(e)}>Delete</button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}

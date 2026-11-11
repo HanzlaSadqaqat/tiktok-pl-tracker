@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { handle, parseBody } from "@/lib/api";
+import { requireUser } from "@/lib/session";
 import { ordersFromCsv } from "@/lib/importers";
 import { importOrders } from "@/lib/repo";
 import { orderSchema } from "@/lib/validation";
 
 export const POST = handle(async (req: Request) => {
+  await requireUser("editor");
   const { csv } = await parseBody(req, z.object({ csv: z.string().max(5_000_000) }));
   const { rows, errors } = ordersFromCsv(csv);
   const valid = rows.flatMap((r, i) => {

@@ -9,7 +9,9 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "seed": "tsx scripts/seed.ts"
+    "seed": "tsx scripts/seed.ts",
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "create-admin": "tsx scripts/create-admin.ts"
   },
   "engines": {
     "node": ">=20"

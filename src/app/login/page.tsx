@@ -9,7 +9,7 @@ export default function LoginPage() {
     <div className="grid min-h-[80vh] place-items-center">
       <div className="w-full max-w-sm rounded-xl border border-line bg-white p-6 shadow-sm">
         <h1 className="text-xl font-semibold text-navy">TikTok Shop P&amp;L</h1>
-        <p className="mb-5 mt-1 text-sm text-muted">Enter your password to open the tracker.</p>
+        <p className="mb-5 mt-1 text-sm text-muted">Sign in with the email and password the admin gave you.</p>
         <Suspense>
           <LoginForm />
         </Suspense>

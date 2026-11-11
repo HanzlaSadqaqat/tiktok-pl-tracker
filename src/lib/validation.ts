@@ -6,6 +6,8 @@ import {
   PAYMENT_METHODS,
   PAYMENT_STATUSES,
   PAYOUT_STATUSES,
+  MIN_PASSWORD_LENGTH,
+  ROLES,
   TAX_TREATMENTS,
 } from "./constants";
 import { isISODate } from "./periods";
@@ -62,3 +64,20 @@ export const settingsSchema = z.object({
 export function formatZodError(err: z.ZodError): string {
   return err.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ");
 }
+
+const email = z.string().trim().toLowerCase().pipe(z.email("Enter a valid email address")).pipe(z.string().max(200));
+const newPassword = z
+  .string()
+  .min(MIN_PASSWORD_LENGTH, `Password must be at least ${MIN_PASSWORD_LENGTH} characters`)
+  .max(200, "Password is too long");
+const personName = z.string().trim().min(1, "Name is required").max(80, "Name is too long");
+
+export const loginSchema = z.object({ email: z.string().trim().max(200), password: z.string().max(200) });
+
+export const createUserSchema = z.object({ name: personName, email, password: newPassword, role: z.enum(ROLES) });
+
+export const updateUserSchema = z
+  .object({ name: personName, email, role: z.enum(ROLES), active: z.boolean(), password: newPassword })
+  .partial();
+
+export const changePasswordSchema = z.object({ currentPassword: z.string().max(200), newPassword });

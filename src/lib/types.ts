@@ -5,6 +5,7 @@ import type {
   PaymentMethod,
   PaymentStatus,
   PayoutStatus,
+  Role,
   TaxTreatment,
 } from "./constants";
 
@@ -92,3 +93,17 @@ export interface OrderCalc {
 
 export type OrderWithCalc = Order & { calc: OrderCalc };
 export type ExpenseWithCalc = Expense & { fxRate: number; fxMissing: boolean; amountReporting: number };
+
+/** A user account as shown in the app (never includes the password hash). */
+export interface PublicUser {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  active: boolean;
+  lastLoginAt: string | null;
+  createdAt: string | null;
+}
+
+/** The signed-in user. */
+export type SessionUser = Pick<PublicUser, "id" | "name" | "email" | "role">;

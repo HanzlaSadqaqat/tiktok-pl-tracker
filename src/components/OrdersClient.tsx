@@ -15,7 +15,7 @@ const RESULT_ROW: Record<string, string> = {
   Cancelled: "text-muted italic",
 };
 
-export function OrdersClient({ today }: { today: string }) {
+export function OrdersClient({ today, canEdit }: { today: string; canEdit: boolean }) {
   const [orders, setOrders] = useState<OrderWithCalc[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -82,10 +82,12 @@ export function OrdersClient({ today }: { today: string }) {
         title="Orders"
         subtitle={`One row per TikTok Shop order. Profit columns are calculated automatically in ${cur || "your reporting currency"}.`}
         actions={
+          canEdit && (
           <>
             <ImportCsv endpoint="/api/orders/import" tabName="Orders" onDone={load} />
             <button className="btn-primary" onClick={() => setEditing("new")} disabled={!settings}>+ Add order</button>
           </>
+          )
         }
       />
 
@@ -179,8 +181,12 @@ export function OrdersClient({ today }: { today: string }) {
                   <td><Badge>{o.calc.basis}</Badge></td>
                   <td><Badge>{o.calc.result}</Badge></td>
                   <td className="text-right">
-                    <button className="mr-2 text-xs font-medium text-accent hover:underline" onClick={() => setEditing(o)}>Edit</button>
-                    <button className="text-xs font-medium text-neg hover:underline" onClick={() => remove(o)}>Delete</button>
+                    {canEdit && (
+                      <>
+                      <button className="mr-2 text-xs font-medium text-accent hover:underline" onClick={() => setEditing(o)}>Edit</button>
+                      <button className="text-xs font-medium text-neg hover:underline" onClick={() => remove(o)}>Delete</button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}

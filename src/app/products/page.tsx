@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Badge, Card, Empty, PageHeader } from "@/components/ui";
 import { productRows, type ProductRow } from "@/lib/calc";
 import { loadAll } from "@/lib/data";
+import { requirePage } from "@/lib/session";
 import { int, money, pct, tone } from "@/lib/format";
 
 export const metadata: Metadata = { title: "Product Analysis" };
@@ -27,6 +28,7 @@ function List({ title, rows, value, empty }: { title: string; rows: ProductRow[]
 }
 
 export default async function ProductsPage() {
+  await requirePage();
   const { orders, settings } = await loadAll();
   const rows = productRows(orders, settings);
   const top = rows.filter((r) => r.profit > 0).slice(0, 5);
