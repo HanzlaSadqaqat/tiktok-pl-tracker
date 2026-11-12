@@ -1,18 +1,19 @@
 import "server-only";
 import { HttpError } from "./api";
 import { secretsMatch } from "./auth";
+import { membershipsByUser, replaceMemberships } from "./clients";
 import type { Role } from "./constants";
 import { connectDb } from "./db";
-import { UserModel, type UserDoc } from "./models";
+import { MembershipModel, UserModel, type UserDoc } from "./models";
 import { dummyHash, hashPassword, verifyPassword } from "./password";
-import type { PublicUser } from "./types";
+import type { MembershipRef, PublicUser } from "./types";
 
 const MAX_FAILED_LOGINS = 5;
 const LOCK_MINUTES = 15;
 
 type LeanUser = UserDoc & { _id: { toString(): string } };
 
-export function toPublicUser(d: LeanUser): PublicUser {
+export function toPublicUser(d: LeanUser, memberships: MembershipRef[] = []): PublicUser {
   return {
     id: d._id.toString(),
     name: d.name,
@@ -21,6 +22,7 @@ export function toPublicUser(d: LeanUser): PublicUser {
     active: d.active,
     lastLoginAt: d.lastLoginAt ? new Date(d.lastLoginAt).toISOString() : null,
     createdAt: d.createdAt ? new Date(d.createdAt).toISOString() : null,
+    memberships: d.role === "admin" ? [] : memberships,
   };
 }
 
@@ -34,7 +36,8 @@ export async function getUserById(id: string): Promise<LeanUser | null> {
 export async function listUsers(): Promise<PublicUser[]> {
   await connectDb();
   const docs = (await UserModel.find().sort({ role: 1, name: 1 }).lean()) as LeanUser[];
-  return docs.map(toPublicUser);
+  const ms = await membershipsByUser(docs.map((d) => d._id.toString()));
+  return docs.map((d) => toPublicUser(d, ms.get(d._id.toString())));
 }
 
 /**
@@ -96,12 +99,33 @@ async function markLogin(user: LeanUser): Promise<LeanUser> {
   return user;
 }
 
-export async function createUser(input: { name: string; email: string; password: string; role: Role }): Promise<PublicUser> {
+export async function createUser(input: {
+  name: string;
+  email: string;
+  password: string;
+  role: Role;
+  memberships?: MembershipRef[];
+}): Promise<PublicUser> {
   await connectDb();
   const email = normEmail(input.email);
   if (await UserModel.exists({ email })) throw new HttpError(409, "A user with this email already exists");
   const doc = await UserModel.create({ name: input.name, email, role: input.role, passwordHash: await hashPassword(input.password) });
-  return toPublicUser(doc.toObject() as LeanUser);
+  const id = doc._id.toString();
+  if (input.role === "member" && input.memberships?.length) {
+    try {
+      await replaceMemberships(id, input.memberships);
+    } catch (err) {
+      await UserModel.deleteOne({ _id: id }); // do not leave a half-created account behind
+      throw err;
+    }
+  }
+  return publicUser(id);
+}
+
+async function publicUser(id: string): Promise<PublicUser> {
+  const doc = await getUserById(id);
+  if (!doc) throw new HttpError(404, "User not found");
+  return toPublicUser(doc, (await membershipsByUser([id])).get(id));
 }
 
 /** Throws when the change would leave the app without an active admin. */
@@ -113,7 +137,7 @@ async function ensureAnotherAdmin(exceptId: string) {
 export async function updateUser(
   id: string,
   actorId: string,
-  patch: { name?: string; email?: string; role?: Role; active?: boolean; password?: string },
+  patch: { name?: string; email?: string; role?: Role; active?: boolean; password?: string; memberships?: MembershipRef[] },
 ): Promise<PublicUser> {
   await connectDb();
   const user = await getUserById(id);
@@ -146,7 +170,8 @@ export async function updateUser(
     { returnDocument: "after", runValidators: true },
   ).lean()) as LeanUser | null;
   if (!doc) throw new HttpError(404, "User not found");
-  return toPublicUser(doc);
+  if (patch.memberships !== undefined) await replaceMemberships(id, patch.memberships);
+  return publicUser(id);
 }
 
 export async function deleteUser(id: string, actorId: string): Promise<void> {
@@ -156,6 +181,7 @@ export async function deleteUser(id: string, actorId: string): Promise<void> {
   if (!user) throw new HttpError(404, "User not found");
   if (user.role === "admin" && user.active) await ensureAnotherAdmin(id);
   await UserModel.deleteOne({ _id: id });
+  await MembershipModel.deleteMany({ userId: id });
 }
 
 /** Changes the signed-in user's own password. Returns the new session version so the caller can re-issue the cookie. */

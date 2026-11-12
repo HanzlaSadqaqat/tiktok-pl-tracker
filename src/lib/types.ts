@@ -1,5 +1,8 @@
 import type {
   BillingType,
+  ClientAccess,
+  ClientStatus,
+  EffectiveAccess,
   ExpenseCategory,
   OrderStatus,
   PaymentMethod,
@@ -94,6 +97,30 @@ export interface OrderCalc {
 export type OrderWithCalc = Order & { calc: OrderCalc };
 export type ExpenseWithCalc = Expense & { fxRate: number; fxMissing: boolean; amountReporting: number };
 
+/** A client: one business / TikTok Shop managed in the app. */
+export interface Client {
+  id: string;
+  name: string;
+  slug: string;
+  shopName: string;
+  marketplace: string;
+  contactName: string;
+  contactEmail: string;
+  notes: string;
+  status: ClientStatus;
+}
+
+export type ClientInput = Omit<Client, "id" | "status">;
+
+/** A client together with what the current user may do on it. */
+export type ClientWithAccess = Client & { access: EffectiveAccess };
+
+/** One of a member’s client memberships. */
+export interface MembershipRef {
+  clientId: string;
+  access: ClientAccess;
+}
+
 /** A user account as shown in the app (never includes the password hash). */
 export interface PublicUser {
   id: string;
@@ -103,7 +130,18 @@ export interface PublicUser {
   active: boolean;
   lastLoginAt: string | null;
   createdAt: string | null;
+  /** Clients this user is a member of (empty for admins, who can access every client). */
+  memberships: MembershipRef[];
 }
 
 /** The signed-in user. */
 export type SessionUser = Pick<PublicUser, "id" | "name" | "email" | "role">;
+
+/** A person with access to one client, for the client people panel. */
+export interface ClientPerson {
+  userId: string;
+  name: string;
+  email: string;
+  active: boolean;
+  access: ClientAccess;
+}

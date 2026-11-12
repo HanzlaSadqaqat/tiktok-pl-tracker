@@ -11,7 +11,8 @@
     "test": "vitest run",
     "seed": "tsx scripts/seed.ts",
     "seed:demo": "tsx scripts/seed-demo.ts",
-    "create-admin": "tsx scripts/create-admin.ts"
+    "create-admin": "tsx scripts/create-admin.ts",
+    "migrate:clients": "tsx scripts/migrate-clients.ts"
   },
   "engines": {
     "node": ">=20"
@@ -30,6 +31,7 @@
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "mongodb-memory-server": "^11.3.0",
     "postcss": "^8.5.32",
     "tailwindcss": "^4.3.5",
     "tsx": "^4.23.15",

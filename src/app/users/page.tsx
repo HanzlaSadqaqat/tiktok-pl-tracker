@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { UsersClient } from "@/components/UsersClient";
+import { listClients } from "@/lib/clients";
 import { requirePage } from "@/lib/session";
 
 export const metadata: Metadata = { title: "Users" };
@@ -7,5 +8,5 @@ export const dynamic = "force-dynamic";
 
 export default async function UsersPage() {
   const me = await requirePage("admin");
-  return <UsersClient meId={me.id} />;
+  return <UsersClient meId={me.id} clients={await listClients()} />;
 }

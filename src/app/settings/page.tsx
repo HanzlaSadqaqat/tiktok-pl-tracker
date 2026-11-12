@@ -1,11 +1,8 @@
-import type { Metadata } from "next";
-import { SettingsForm } from "@/components/SettingsForm";
-import { requirePage } from "@/lib/session";
+import { redirectToClientPage } from "@/lib/legacy";
 
-export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
 
-export default async function SettingsPage() {
-  await requirePage("admin");
-  return <SettingsForm />;
+/** Old URL from before clients existed. */
+export default async function Legacy() {
+  return redirectToClientPage("settings");
 }

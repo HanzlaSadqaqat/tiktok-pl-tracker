@@ -7,12 +7,15 @@ import type { AppSettings, Expense, ExpenseInput } from "@/lib/types";
 type FormState = Omit<ExpenseInput, "amount"> & { amount: string };
 
 export function ExpenseForm({
+  api,
   expense,
   settings,
   today,
   onSaved,
   onCancel,
 }: {
+  /** The client's API base, e.g. /api/clients/<id> */
+  api: string;
   expense: Expense | null;
   settings: AppSettings;
   today: string;
@@ -39,7 +42,7 @@ export function ExpenseForm({
     e.preventDefault();
     setSaving(true);
     setError(null);
-    const res = await fetch(expense ? `/api/expenses/${expense.id}` : "/api/expenses", {
+    const res = await fetch(expense ? `${api}/expenses/${expense.id}` : `${api}/expenses`, {
       method: expense ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...f, amount: Number(f.amount) || 0 }),

@@ -51,12 +51,15 @@ function toPayload(f: FormState): OrderInput {
 }
 
 export function OrderForm({
+  api,
   order,
   settings,
   today,
   onSaved,
   onCancel,
 }: {
+  /** The client's API base, e.g. /api/clients/<id> */
+  api: string;
   order: Order | null;
   settings: AppSettings;
   today: string;
@@ -75,7 +78,7 @@ export function OrderForm({
     e.preventDefault();
     setSaving(true);
     setError(null);
-    const res = await fetch(order ? `/api/orders/${order.id}` : "/api/orders", {
+    const res = await fetch(order ? `${api}/orders/${order.id}` : `${api}/orders`, {
       method: order ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(toPayload(f)),

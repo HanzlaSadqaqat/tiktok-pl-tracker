@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createSessionToken, secretsMatch, verifySessionToken } from "./auth";
-import { hasRole } from "./constants";
+import { meetsLevel } from "./constants";
 import { hashPassword, verifyPassword } from "./password";
 
 const USER_ID = "64b7f0c2a1b2c3d4e5f60718";
@@ -80,13 +80,14 @@ describe("password hashing", () => {
   });
 });
 
-describe("roles", () => {
-  it("ranks admin above editor above viewer", () => {
-    expect(hasRole("admin", "admin")).toBe(true);
-    expect(hasRole("admin", "viewer")).toBe(true);
-    expect(hasRole("editor", "editor")).toBe(true);
-    expect(hasRole("editor", "admin")).toBe(false);
-    expect(hasRole("viewer", "editor")).toBe(false);
-    expect(hasRole("viewer", "viewer")).toBe(true);
+describe("client access levels", () => {
+  it("ranks admin above edit above view", () => {
+    expect(meetsLevel("admin", "admin")).toBe(true);
+    expect(meetsLevel("admin", "edit")).toBe(true);
+    expect(meetsLevel("edit", "edit")).toBe(true);
+    expect(meetsLevel("edit", "view")).toBe(true);
+    expect(meetsLevel("edit", "admin")).toBe(false);
+    expect(meetsLevel("view", "edit")).toBe(false);
+    expect(meetsLevel("view", "view")).toBe(true);
   });
 });

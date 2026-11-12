@@ -1,14 +1,8 @@
-import type { Metadata } from "next";
-import { OrdersClient } from "@/components/OrdersClient";
-import { timeZone } from "@/lib/data";
-import { hasRole } from "@/lib/constants";
-import { todayIn } from "@/lib/periods";
-import { requirePage } from "@/lib/session";
+import { redirectToClientPage } from "@/lib/legacy";
 
-export const metadata: Metadata = { title: "Orders" };
 export const dynamic = "force-dynamic";
 
-export default async function OrdersPage() {
-  const user = await requirePage();
-  return <OrdersClient today={todayIn(timeZone())} canEdit={hasRole(user.role, "editor")} />;
+/** Old URL from before clients existed. */
+export default async function Legacy() {
+  return redirectToClientPage("orders");
 }

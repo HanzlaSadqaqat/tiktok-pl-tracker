@@ -1,53 +1,33 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { MIN_PASSWORD_LENGTH, ROLES, ROLE_LABELS, type Role } from "@/lib/constants";
-import type { PublicUser } from "@/lib/types";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ACCESS_LABELS, CLIENT_ACCESS, MIN_PASSWORD_LENGTH, ROLES, ROLE_LABELS, type ClientAccess, type Role } from "@/lib/constants";
+import type { Client, MembershipRef, PublicUser } from "@/lib/types";
+import { send } from "./ClientsManager";
 import { Modal } from "./Modal";
+import { Credentials, generatePassword } from "./people";
 import { Empty, PageHeader } from "./ui";
 
 const ROLE_HELP: Record<Role, string> = {
-  admin: "Everything, including Settings and managing users.",
-  editor: "Sees all pages. Can add, edit, delete and import orders and business expenses.",
-  viewer: "Sees the dashboard, orders, expenses, reports and products. Cannot change anything.",
+  admin: "The agency. Sees and manages every client, client settings and all users.",
+  member: "A team member or a client. Sees only the clients ticked below, with edit or view-only access on each.",
 };
 
 const ROLE_BADGE: Record<Role, string> = {
   admin: "bg-navy text-white",
-  editor: "bg-accent-soft text-accent",
-  viewer: "bg-canvas text-ink",
+  member: "bg-accent-soft text-accent",
 };
 
 const when = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "Never";
 
-/** A readable random password, e.g. "kite-Rv8q-maple-42". */
-function generatePassword() {
-  const words = ["amber", "cedar", "delta", "ember", "falcon", "harbor", "kite", "lotus", "maple", "nova", "orbit", "pixel", "river", "sable", "tiger", "zephyr"];
-  const r = new Uint32Array(4);
-  crypto.getRandomValues(r);
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-  const mid = Array.from(crypto.getRandomValues(new Uint32Array(4)), (n) => chars[n % chars.length]).join("");
-  return `${words[r[0] % words.length]}-${mid}-${words[r[1] % words.length]}-${10 + (r[2] % 90)}`;
-}
-
-async function send(url: string, method: string, body?: unknown) {
-  const res = await fetch(url, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.error ?? "Something went wrong");
-  return data;
-}
-
-export function UsersClient({ meId }: { meId: string }) {
+export function UsersClient({ meId, clients }: { meId: string; clients: Client[] }) {
   const [users, setUsers] = useState<PublicUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<PublicUser | "new" | null>(null);
   const [resetting, setResetting] = useState<PublicUser | null>(null);
+  const clientName = useMemo(() => new Map(clients.map((c) => [c.id, c])), [clients]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -77,7 +57,7 @@ export function UsersClient({ meId }: { meId: string }) {
   }
 
   async function remove(u: PublicUser) {
-    if (!confirm(`Delete the account for ${u.name} (${u.email})? This cannot be undone. Their orders and expenses stay.`)) return;
+    if (!confirm(`Delete the account for ${u.name} (${u.email})? This cannot be undone. Orders and expenses they entered stay.`)) return;
     try {
       await send(`/api/users/${u.id}`, "DELETE");
       load();
@@ -94,7 +74,7 @@ export function UsersClient({ meId }: { meId: string }) {
         actions={<button className="btn-primary" onClick={() => setEditing("new")}>+ Add user</button>}
       />
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-3">
+      <div className="mb-5 grid gap-3 sm:grid-cols-2">
         {ROLES.map((r) => (
           <div key={r} className="rounded-lg border border-line bg-white p-3">
             <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${ROLE_BADGE[r]}`}>{ROLE_LABELS[r]}</span>
@@ -116,7 +96,8 @@ export function UsersClient({ meId }: { meId: string }) {
               <tr>
                 <th>Name</th>
                 <th>Email</th>
-                <th>Access</th>
+                <th>Role</th>
+                <th>Clients</th>
                 <th>Status</th>
                 <th>Last sign-in</th>
                 <th><span className="sr-only">Actions</span></th>
@@ -134,6 +115,25 @@ export function UsersClient({ meId }: { meId: string }) {
                     <td>{u.email}</td>
                     <td>
                       <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${ROLE_BADGE[u.role]}`}>{ROLE_LABELS[u.role]}</span>
+                    </td>
+                    <td className="max-w-80 text-sm">
+                      {u.role === "admin" ? (
+                        <span className="text-muted">All clients</span>
+                      ) : !u.memberships.length ? (
+                        <span className="text-warn">No clients</span>
+                      ) : (
+                        <ul className="space-y-0.5">
+                          {u.memberships.map((m) => {
+                            const c = clientName.get(m.clientId);
+                            return (
+                              <li key={m.clientId} className="truncate">
+                                {c?.name ?? "Unknown client"}
+                                <span className="text-xs text-muted"> · {ACCESS_LABELS[m.access]}{c?.status === "Archived" ? " · archived" : ""}</span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
                     </td>
                     <td>
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${u.active ? "bg-pos-soft text-pos" : "bg-neg-soft text-neg"}`}>
@@ -164,10 +164,11 @@ export function UsersClient({ meId }: { meId: string }) {
       )}
 
       {editing && (
-        <Modal title={editing === "new" ? "Add user" : `Edit ${editing.name}`} onClose={() => setEditing(null)}>
+        <Modal title={editing === "new" ? "Add user" : `Edit ${editing.name}`} onClose={() => setEditing(null)} wide>
           <UserForm
             user={editing === "new" ? null : editing}
             self={editing !== "new" && editing.id === meId}
+            clients={clients}
             onSaved={() => {
               setEditing(null);
               load();
@@ -191,10 +192,48 @@ export function UsersClient({ meId }: { meId: string }) {
   );
 }
 
-function UserForm({ user, self, onSaved }: { user: PublicUser | null; self: boolean; onSaved: () => void }) {
+/** Tick clients and choose edit / view on each. */
+function MembershipPicker({ clients, value, onChange }: { clients: Client[]; value: MembershipRef[]; onChange: (v: MembershipRef[]) => void }) {
+  const [q, setQ] = useState("");
+  const byId = new Map(value.map((m) => [m.clientId, m.access]));
+  const shown = clients.filter((c) => !q.trim() || c.name.toLowerCase().includes(q.trim().toLowerCase()));
+  const toggle = (id: string, on: boolean) => onChange(on ? [...value, { clientId: id, access: "view" }] : value.filter((m) => m.clientId !== id));
+  const setAccess = (id: string, access: ClientAccess) => onChange(value.map((m) => (m.clientId === id ? { ...m, access } : m)));
+
+  if (!clients.length) return <p className="text-sm text-muted">No clients exist yet. Create one on the Clients page first.</p>;
+  return (
+    <div className="rounded-md border border-line">
+      {clients.length > 6 && (
+        <input className="w-full border-b border-line px-3 py-2 text-sm outline-none" placeholder="Search clients..." value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search clients" />
+      )}
+      <ul className="max-h-64 overflow-y-auto">
+        {shown.map((c) => {
+          const access = byId.get(c.id);
+          return (
+            <li key={c.id} className="flex items-center justify-between gap-3 border-b border-line/70 px-3 py-2 last:border-0">
+              <label className="flex min-w-0 cursor-pointer items-center gap-2 text-sm">
+                <input type="checkbox" checked={!!access} onChange={(e) => toggle(c.id, e.target.checked)} />
+                <span className="truncate">{c.name}</span>
+                {c.status === "Archived" && <span className="text-xs text-muted">(archived)</span>}
+              </label>
+              {access && (
+                <select className="field w-auto py-1 text-sm" value={access} onChange={(e) => setAccess(c.id, e.target.value as ClientAccess)} aria-label={`Access to ${c.name}`}>
+                  {CLIENT_ACCESS.map((a) => <option key={a} value={a}>{ACCESS_LABELS[a]}</option>)}
+                </select>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function UserForm({ user, self, clients, onSaved }: { user: PublicUser | null; self: boolean; clients: Client[]; onSaved: () => void }) {
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
-  const [role, setRole] = useState<Role>(user?.role ?? "viewer");
+  const [role, setRole] = useState<Role>(user?.role ?? "member");
+  const [memberships, setMemberships] = useState<MembershipRef[]>(user?.memberships ?? []);
   const [password, setPassword] = useState(() => (user ? "" : generatePassword()));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -205,11 +244,12 @@ function UserForm({ user, self, onSaved }: { user: PublicUser | null; self: bool
     setBusy(true);
     setError(null);
     try {
+      const ms = role === "member" ? memberships : [];
       if (user) {
-        await send(`/api/users/${user.id}`, "PUT", self ? { name, email } : { name, email, role });
+        await send(`/api/users/${user.id}`, "PUT", self ? { name, email } : { name, email, role, memberships: ms });
         onSaved();
       } else {
-        await send("/api/users", "POST", { name, email, role, password });
+        await send("/api/users", "POST", { name, email, role, password, memberships: ms });
         setCreated({ email, password });
       }
     } catch (err) {
@@ -230,42 +270,57 @@ function UserForm({ user, self, onSaved }: { user: PublicUser | null; self: bool
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4">
-      <div>
-        <label className="label" htmlFor="u-name">Name</label>
-        <input id="u-name" className="field" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-      </div>
-      <div>
-        <label className="label" htmlFor="u-email">Email</label>
-        <input id="u-email" type="email" className="field" required value={email} onChange={(e) => setEmail(e.target.value)} />
-      </div>
-      <fieldset disabled={self}>
-        <legend className="label">Access</legend>
-        <div className="space-y-2">
-          {ROLES.map((r) => (
-            <label key={r} className={`flex cursor-pointer gap-3 rounded-md border p-3 ${role === r ? "border-accent bg-accent-soft/50" : "border-line"} ${self ? "cursor-not-allowed opacity-60" : ""}`}>
-              <input type="radio" name="role" className="mt-0.5" checked={role === r} onChange={() => setRole(r)} />
-              <span>
-                <span className="block text-sm font-medium text-navy">{ROLE_LABELS[r]}</span>
-                <span className="block text-xs text-muted">{ROLE_HELP[r]}</span>
-              </span>
-            </label>
-          ))}
-        </div>
-        {self && <p className="mt-2 text-xs text-muted">You cannot change your own access.</p>}
-      </fieldset>
-      {!user && (
+    <form onSubmit={submit} className="grid gap-5 md:grid-cols-2">
+      <div className="space-y-4">
         <div>
-          <label className="label" htmlFor="u-pw">Temporary password</label>
-          <div className="flex gap-2">
-            <input id="u-pw" className="field font-mono" required minLength={MIN_PASSWORD_LENGTH} value={password} onChange={(e) => setPassword(e.target.value)} />
-            <button type="button" className="btn-secondary shrink-0" onClick={() => setPassword(generatePassword())}>New</button>
-          </div>
-          <p className="mt-1 text-xs text-muted">At least {MIN_PASSWORD_LENGTH} characters. They can change it under My account after signing in.</p>
+          <label className="label" htmlFor="u-name">Name</label>
+          <input id="u-name" className="field" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} autoFocus />
         </div>
-      )}
-      {error && <p className="rounded-md bg-neg-soft px-3 py-2 text-sm text-neg">{error}</p>}
-      <button className="btn-primary w-full" disabled={busy}>{busy ? "Saving..." : user ? "Save changes" : "Create user"}</button>
+        <div>
+          <label className="label" htmlFor="u-email">Email</label>
+          <input id="u-email" type="email" className="field" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        </div>
+        <fieldset disabled={self}>
+          <legend className="label">Role</legend>
+          <div className="space-y-2">
+            {ROLES.map((r) => (
+              <label key={r} className={`flex cursor-pointer gap-3 rounded-md border p-3 ${role === r ? "border-accent bg-accent-soft/50" : "border-line"} ${self ? "cursor-not-allowed opacity-60" : ""}`}>
+                <input type="radio" name="role" className="mt-0.5" checked={role === r} onChange={() => setRole(r)} />
+                <span>
+                  <span className="block text-sm font-medium text-navy">{ROLE_LABELS[r]}</span>
+                  <span className="block text-xs text-muted">{ROLE_HELP[r]}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          {self && <p className="mt-2 text-xs text-muted">You cannot change your own role.</p>}
+        </fieldset>
+        {!user && (
+          <div>
+            <label className="label" htmlFor="u-pw">Temporary password</label>
+            <div className="flex gap-2">
+              <input id="u-pw" className="field font-mono" required minLength={MIN_PASSWORD_LENGTH} value={password} onChange={(e) => setPassword(e.target.value)} />
+              <button type="button" className="btn-secondary shrink-0" onClick={() => setPassword(generatePassword())}>New</button>
+            </div>
+            <p className="mt-1 text-xs text-muted">At least {MIN_PASSWORD_LENGTH} characters. They can change it under My account after signing in.</p>
+          </div>
+        )}
+      </div>
+      <div>
+        <p className="label">Client access</p>
+        {role === "admin" ? (
+          <p className="rounded-md bg-canvas px-3 py-2 text-sm text-muted">Agency admins can open every client.</p>
+        ) : (
+          <>
+            <MembershipPicker clients={clients} value={memberships} onChange={setMemberships} />
+            <p className="mt-1 text-xs text-muted">Changes take effect on their next click. Archived clients stay hidden from members.</p>
+          </>
+        )}
+      </div>
+      <div className="md:col-span-2">
+        {error && <p className="mb-3 rounded-md bg-neg-soft px-3 py-2 text-sm text-neg">{error}</p>}
+        <button className="btn-primary w-full" disabled={busy}>{busy ? "Saving..." : user ? "Save changes" : "Create user"}</button>
+      </div>
     </form>
   );
 }
@@ -313,25 +368,5 @@ function ResetPasswordForm({ user, onDone }: { user: PublicUser; onDone: () => v
       {error && <p className="rounded-md bg-neg-soft px-3 py-2 text-sm text-neg">{error}</p>}
       <button className="btn-primary w-full" disabled={busy}>{busy ? "Saving..." : "Set new password"}</button>
     </form>
-  );
-}
-
-function Credentials({ email, password }: { email: string; password: string }) {
-  const [copied, setCopied] = useState(false);
-  const text = `Sign in at ${typeof window !== "undefined" ? window.location.origin : ""}/login\nEmail: ${email}\nPassword: ${password}`;
-  return (
-    <div className="rounded-md border border-line bg-canvas p-3">
-      <pre className="whitespace-pre-wrap break-all font-mono text-xs text-ink">{text}</pre>
-      <button
-        type="button"
-        className="btn-secondary mt-3"
-        onClick={async () => {
-          await navigator.clipboard.writeText(text).catch(() => {});
-          setCopied(true);
-        }}
-      >
-        {copied ? "Copied" : "Copy"}
-      </button>
-    </div>
   );
 }

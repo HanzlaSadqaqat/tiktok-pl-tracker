@@ -10,7 +10,8 @@ import { ImportCsv } from "./ImportCsv";
 import { Modal } from "./Modal";
 import { Badge, Card, Empty, MetricRow, PageHeader } from "./ui";
 
-export function ExpensesClient({ today, canEdit }: { today: string; canEdit: boolean }) {
+export function ExpensesClient({ clientId, clientName, today, canEdit }: { clientId: string; clientName: string; today: string; canEdit: boolean }) {
+  const api = `/api/clients/${clientId}`;
   const [expenses, setExpenses] = useState<ExpenseWithCalc[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -22,14 +23,14 @@ export function ExpensesClient({ today, canEdit }: { today: string; canEdit: boo
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await fetch("/api/expenses", { cache: "no-store" });
+    const res = await fetch(`${api}/expenses`, { cache: "no-store" });
     const data = await res.json().catch(() => null);
     setLoading(false);
     if (!res.ok) return setError(data?.error ?? "Could not load expenses");
     setError(null);
     setExpenses(data.expenses);
     setSettings(data.settings);
-  }, []);
+  }, [api]);
 
   useEffect(() => {
     load();
@@ -70,7 +71,7 @@ export function ExpensesClient({ today, canEdit }: { today: string; canEdit: boo
 
   async function remove(e: ExpenseWithCalc) {
     if (!confirm(`Delete "${e.name}" on ${niceDate(e.date)}? This cannot be undone.`)) return;
-    const res = await fetch(`/api/expenses/${e.id}`, { method: "DELETE" });
+    const res = await fetch(`${api}/expenses/${e.id}`, { method: "DELETE" });
     if (!res.ok) return alert((await res.json().catch(() => null))?.error ?? "Could not delete");
     load();
   }
@@ -81,11 +82,11 @@ export function ExpensesClient({ today, canEdit }: { today: string; canEdit: boo
     <>
       <PageHeader
         title="Business Expenses"
-        subtitle="Costs not tied to a single order, such as Kalodata, Shopify, software and staff. They reduce net profit, never individual orders."
+        subtitle={`${clientName}. Costs not tied to a single order, such as Kalodata, Shopify, software and staff. They reduce net profit, never individual orders.`}
         actions={
           canEdit && (
           <>
-            <ImportCsv endpoint="/api/expenses/import" tabName="Business Expenses" onDone={load} />
+            <ImportCsv endpoint={`${api}/expenses/import`} tabName="Business Expenses" onDone={load} />
             <button className="btn-primary" onClick={() => setEditing("new")} disabled={!settings}>+ Add expense</button>
           </>
           )
@@ -210,6 +211,7 @@ export function ExpensesClient({ today, canEdit }: { today: string; canEdit: boo
       {editing && settings && (
         <Modal title={editing === "new" ? "Add business expense" : `Edit ${editing.name}`} onClose={() => setEditing(null)}>
           <ExpenseForm
+            api={api}
             expense={editing === "new" ? null : editing}
             settings={settings}
             today={today}

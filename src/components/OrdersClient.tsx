@@ -15,7 +15,8 @@ const RESULT_ROW: Record<string, string> = {
   Cancelled: "text-muted italic",
 };
 
-export function OrdersClient({ today, canEdit }: { today: string; canEdit: boolean }) {
+export function OrdersClient({ clientId, clientName, today, canEdit }: { clientId: string; clientName: string; today: string; canEdit: boolean }) {
+  const api = `/api/clients/${clientId}`;
   const [orders, setOrders] = useState<OrderWithCalc[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -29,14 +30,14 @@ export function OrdersClient({ today, canEdit }: { today: string; canEdit: boole
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await fetch("/api/orders", { cache: "no-store" });
+    const res = await fetch(`${api}/orders`, { cache: "no-store" });
     const data = await res.json().catch(() => null);
     setLoading(false);
     if (!res.ok) return setError(data?.error ?? "Could not load orders");
     setError(null);
     setOrders(data.orders);
     setSettings(data.settings);
-  }, []);
+  }, [api]);
 
   useEffect(() => {
     load();
@@ -69,7 +70,7 @@ export function OrdersClient({ today, canEdit }: { today: string; canEdit: boole
 
   async function remove(o: OrderWithCalc) {
     if (!confirm(`Delete order ${o.orderId}? This cannot be undone.`)) return;
-    const res = await fetch(`/api/orders/${o.id}`, { method: "DELETE" });
+    const res = await fetch(`${api}/orders/${o.id}`, { method: "DELETE" });
     if (!res.ok) return alert((await res.json().catch(() => null))?.error ?? "Could not delete");
     load();
   }
@@ -80,11 +81,11 @@ export function OrdersClient({ today, canEdit }: { today: string; canEdit: boole
     <>
       <PageHeader
         title="Orders"
-        subtitle={`One row per TikTok Shop order. Profit columns are calculated automatically in ${cur || "your reporting currency"}.`}
+        subtitle={`${clientName}. One row per TikTok Shop order. Profit columns are calculated automatically in ${cur || "your reporting currency"}.`}
         actions={
           canEdit && (
           <>
-            <ImportCsv endpoint="/api/orders/import" tabName="Orders" onDone={load} />
+            <ImportCsv endpoint={`${api}/orders/import`} tabName="Orders" onDone={load} />
             <button className="btn-primary" onClick={() => setEditing("new")} disabled={!settings}>+ Add order</button>
           </>
           )
@@ -210,6 +211,7 @@ export function OrdersClient({ today, canEdit }: { today: string; canEdit: boole
       {editing && settings && (
         <Modal title={editing === "new" ? "Add order" : `Edit order ${editing.orderId}`} onClose={() => setEditing(null)} wide>
           <OrderForm
+            api={api}
             order={editing === "new" ? null : editing}
             settings={settings}
             today={today}

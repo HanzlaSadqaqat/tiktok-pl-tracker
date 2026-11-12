@@ -5,7 +5,8 @@ import { CURRENCIES, TAX_TREATMENTS, type TaxTreatment } from "@/lib/constants";
 import type { AppSettings } from "@/lib/types";
 import { Card, PageHeader } from "./ui";
 
-export function SettingsForm() {
+export function SettingsForm({ clientId, clientName }: { clientId: string; clientName: string }) {
+  const api = `/api/clients/${clientId}/settings`;
   const [s, setS] = useState<AppSettings | null>(null);
   const [rates, setRates] = useState<Record<string, string>>({});
   const [newCode, setNewCode] = useState("");
@@ -18,14 +19,14 @@ export function SettingsForm() {
   }
 
   useEffect(() => {
-    fetch("/api/settings", { cache: "no-store" })
+    fetch(api, { cache: "no-store" })
       .then(async (r) => {
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
         apply(d.settings);
       })
       .catch((e: Error) => setMsg({ ok: false, text: e.message || "Could not load settings" }));
-  }, []);
+  }, [api]);
 
   if (!s) return <PageHeader title="Settings" subtitle={msg?.text ?? "Loading..."} />;
 
@@ -40,7 +41,7 @@ export function SettingsForm() {
         .map(([k, v]) => [k, Number(v)] as const)
         .filter(([k, v]) => k !== s.reportingCurrency && Number.isFinite(v) && v > 0),
     );
-    const res = await fetch("/api/settings", {
+    const res = await fetch(api, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...s, rates: cleanRates }),
@@ -49,15 +50,15 @@ export function SettingsForm() {
     setBusy(false);
     if (!res.ok) return setMsg({ ok: false, text: d?.error ?? "Could not save" });
     apply(d.settings);
-    setMsg({ ok: true, text: "Settings saved. All reports now use these values." });
+    setMsg({ ok: true, text: `Settings saved. All of ${clientName}'s reports now use these values.` });
   }
 
   async function refreshRates() {
     setBusy(true);
     setMsg(null);
     // Save the reporting currency first so rates are fetched against it.
-    await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...s, rates: {} }) });
-    const res = await fetch("/api/settings/rates", { method: "POST" });
+    await fetch(api, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...s, rates: {} }) });
+    const res = await fetch(`${api}/rates`, { method: "POST" });
     const d = await res.json().catch(() => null);
     setBusy(false);
     if (!res.ok) return setMsg({ ok: false, text: d?.error ?? "Could not load rates" });
@@ -67,7 +68,7 @@ export function SettingsForm() {
 
   return (
     <>
-      <PageHeader title="Settings" subtitle="These values apply to every order, expense and report." />
+      <PageHeader title="Settings" subtitle={`${clientName}. These values apply to every order, expense and report of this client only.`} />
       <div className="grid gap-6 lg:grid-cols-2">
         <Card title="General">
           <div className="space-y-4 p-4">

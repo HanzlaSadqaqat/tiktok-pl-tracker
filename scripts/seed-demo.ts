@@ -1,23 +1,15 @@
 /**
  * Loads a realistic 12-month demo dataset so every page, chart and filter has something to show.
  *
- *   npm run seed:demo           add the demo rows (safe to run twice, nothing is duplicated)
- *   npm run seed:demo -- --clear  remove every demo row again
+ *   npm run seed:demo -- my-shop          add the demo rows to that client (safe to run twice)
+ *   npm run seed:demo -- my-shop --clear  remove that client's demo rows again
  *
  * Demo orders have IDs starting with "DEMO-" and demo expenses have the description "Demo data",
  * so they never mix with real rows. The data is generated from a fixed seed, so it is the same every run.
  */
-import { readFileSync, existsSync } from "node:fs";
+import "./load-env";
 import mongoose from "mongoose";
 import type { OrderInput, ExpenseInput } from "../src/lib/types";
-
-for (const file of [".env.local", ".env"]) {
-  if (!existsSync(file)) continue;
-  for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.*)\s*$/);
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
-  }
-}
 
 const DEMO_TAG = "Demo data";
 
@@ -51,13 +43,25 @@ const weighted = PRODUCTS.flatMap((p) => Array<(typeof PRODUCTS)[number]>(p.weig
 
 async function main() {
   const { connectDb } = await import("../src/lib/db");
-  const { OrderModel, ExpenseModel, SettingsModel } = await import("../src/lib/models");
+  const { ClientModel, OrderModel, ExpenseModel, SettingsModel } = await import("../src/lib/models");
   const { todayIn, addDays, addMonths, monthStart, monthEnd } = await import("../src/lib/periods");
   await connectDb();
 
+  const slug = process.argv.slice(2).find((a) => !a.startsWith("--"))?.trim().toLowerCase();
+  if (!slug) {
+    console.error("Usage: npm run seed:demo -- <client-web-address> [--clear]   e.g. npm run seed:demo -- my-shop");
+    process.exit(1);
+  }
+  const client = await ClientModel.findOne({ slug }).lean();
+  if (!client) {
+    console.error(`No client with the web address "${slug}". Run npm run migrate:clients first, or create the client in the app.`);
+    process.exit(1);
+  }
+  const clientId = client._id;
+
   if (process.argv.includes("--clear")) {
-    const o = await OrderModel.deleteMany({ orderId: /^DEMO-/ });
-    const e = await ExpenseModel.deleteMany({ description: DEMO_TAG });
+    const o = await OrderModel.deleteMany({ clientId, orderId: /^DEMO-/ });
+    const e = await ExpenseModel.deleteMany({ clientId, description: DEMO_TAG });
     console.log(`Removed ${o.deletedCount} demo orders and ${e.deletedCount} demo expenses.`);
     await mongoose.disconnect();
     return;
@@ -68,8 +72,8 @@ async function main() {
 
   // Demo rows use GBP and PKR, so make sure those rates exist (existing rates are never overwritten).
   const settings = await SettingsModel.findOneAndUpdate(
-    { key: "main" },
-    { $setOnInsert: { key: "main" } },
+    { clientId },
+    { $setOnInsert: { clientId } },
     { upsert: true, returnDocument: "after" },
   );
   const fallbackRates: Record<string, number> = { GBP: 1.27, PKR: 0.0036 };
@@ -77,7 +81,7 @@ async function main() {
   for (const [code, rate] of Object.entries(fallbackRates)) {
     if (settings.reportingCurrency !== code && !settings.rates?.get(code)) missing[`rates.${code}`] = rate;
   }
-  if (Object.keys(missing).length) await SettingsModel.updateOne({ key: "main" }, { $set: missing });
+  if (Object.keys(missing).length) await SettingsModel.updateOne({ clientId }, { $set: missing });
 
   // ---- Orders: volume grows month by month, recent orders are still in progress ----
   const orders: OrderInput[] = [];
@@ -171,19 +175,19 @@ async function main() {
 
   // ---- Write (upserts, so running twice adds nothing) ----
   const oRes = await OrderModel.bulkWrite(
-    orders.map((o) => ({ updateOne: { filter: { orderId: o.orderId }, update: { $setOnInsert: o }, upsert: true } })),
+    orders.map((o) => ({ updateOne: { filter: { clientId, orderId: o.orderId }, update: { $setOnInsert: { ...o, clientId } }, upsert: true } })),
   );
   const eRes = await ExpenseModel.bulkWrite(
     expenses.map((e) => ({
-      updateOne: { filter: { date: e.date, name: e.name, amount: e.amount, description: DEMO_TAG }, update: { $setOnInsert: e }, upsert: true },
+      updateOne: { filter: { clientId, date: e.date, name: e.name, amount: e.amount, description: DEMO_TAG }, update: { $setOnInsert: { ...e, clientId } }, upsert: true },
     })),
   );
 
-  console.log(`Demo period: ${firstMonth} to ${today}`);
+  console.log(`Client: ${client.name}. Demo period: ${firstMonth} to ${today}`);
   console.log(`Orders:   ${oRes.upsertedCount} added, ${orders.length - oRes.upsertedCount} already there`);
   console.log(`Expenses: ${eRes.upsertedCount} added, ${expenses.length - eRes.upsertedCount} already there`);
   if (Object.keys(missing).length) console.log(`Added exchange rates: ${Object.keys(missing).map((k) => k.slice(6)).join(", ")}`);
-  console.log(`Remove it again with: npm run seed:demo -- --clear`);
+  console.log(`Remove it again with: npm run seed:demo -- ${slug} --clear`);
   await mongoose.disconnect();
 }
 

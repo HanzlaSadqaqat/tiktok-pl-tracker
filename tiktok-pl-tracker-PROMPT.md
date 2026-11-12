@@ -1,6 +1,6 @@
 # Project prompt: TikTok Shop Profit & Loss Tracker (Next.js + TypeScript + MongoDB)
 
-You are working on a production web app for a TikTok Shop seller. It tracks every order, the real profit or loss on each one, ROI, and the business expenses that sit outside individual orders (Kalodata, Shopify, software, staff). The seller is not an accountant, so the app must be accurate, clear and simple to use.
+You are working on a production web app for an agency that runs TikTok Shops for several clients. For each client it tracks every order, the real profit or loss on each one, ROI, and the business expenses that sit outside individual orders (Kalodata, Shopify, software, staff). Each client's data, settings and reports are completely separate, and the agency gets an overview of every client. The users are not accountants, so the app must be accurate, clear and simple to use.
 
 **If this repository already contains the code**, read it first, run `npm install`, `npm test`, `npm run typecheck` and `npm run build`, and treat this document as the specification: fix anything that does not match it, and keep everything that does. **If the repository is empty**, build the app from this specification.
 
@@ -30,23 +30,38 @@ Document these in `.env.example` and the README.
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `MONGODB_URI` | Yes | MongoDB connection string (MongoDB Atlas free tier works). |
-| `APP_PASSWORD` | Recommended | Single password for signing in. When empty, sign-in is disabled (local use only). |
-| `SESSION_SECRET` | When `APP_PASSWORD` is set | At least 32 characters. Signs the session cookie. |
+| `MONGODB_URI` | Yes | MongoDB connection string (MongoDB Atlas free tier works). Where the `mongodb+srv://` DNS TXT lookup times out, use the standard `mongodb://host1,host2,host3/...?tls=true&authSource=admin` format. |
+| `SESSION_SECRET` | Yes | At least 32 characters. Signs the session cookie. Without it nobody can sign in. |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | For the first sign-in | The first agency admin account is created the first time someone signs in with exactly these details while no admin exists. Ignored once an admin exists. Password at least 8 characters. |
+| `ADMIN_NAME` | No | Display name for that first admin. Default `Admin`. |
 | `APP_TIMEZONE` | No | IANA time zone for "Today", "This Week" and similar. Default `Asia/Karachi`. |
 
-The database connection must be lazy, so `next build` succeeds without `MONGODB_URI`. When it is missing, API routes return a clear error: "MONGODB_URI is not set. Copy .env.example to .env.local and add your connection string."
+There is no shared app password: sign-in is always by user account (section 8). The database connection must be lazy, so `next build` succeeds without `MONGODB_URI`. When it is missing, API routes return a clear error: "MONGODB_URI is not set. Copy .env.example to .env.local and add your connection string."
 
 ## 3. Data model
 
-Store every date as a **`"YYYY-MM-DD"` string**, never a `Date`. This keeps range comparisons free of time zone shifts, and lexical string comparison works for filtering.
+Store every business date as a **`"YYYY-MM-DD"` string**, never a `Date`. This keeps range comparisons free of time zone shifts, and lexical string comparison works for filtering.
+
+### Client (one business / TikTok Shop the agency manages)
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | required, e.g. "Ali's Home Store" |
+| `slug` | string | required, **unique**, URL-safe, generated from the name (`alis-home-store`), editable. Used in page URLs. |
+| `shopName` | string | TikTok Shop name, optional |
+| `marketplace` | string | e.g. US, UK, MY, PH; optional |
+| `contactName`, `contactEmail`, `notes` | string | optional |
+| `status` | enum | `Active`, `Archived` |
+
+Use timestamps. **Every order, business expense and settings record belongs to exactly one client.**
 
 ### Order
 
 | Field | Type | Notes |
 |---|---|---|
-| `orderDate` | string (date) | required, indexed |
-| `orderId` | string | required, **unique**, trimmed. TikTok order IDs are long numbers, so always keep them as strings. |
+| `clientId` | ObjectId → Client | required |
+| `orderDate` | string (date) | required |
+| `orderId` | string | required, trimmed. **Unique per client** (compound unique index `{ clientId, orderId }`): two clients can have the same order ID. TikTok order IDs are long numbers, so always keep them as strings. |
 | `productName` | string | required |
 | `sku` | string | |
 | `status` | enum | `Pending`, `Processing`, `Shipped`, `Delivered`, `Cancelled`, `Returned`, `Refunded` |
@@ -58,17 +73,19 @@ Store every date as a **`"YYYY-MM-DD"` string**, never a `Date`. This keeps rang
 | `packaging`, `shipping`, `otherCosts` | number | per order |
 | `referralFee`, `transactionFee`, `fulfillmentFee`, `affiliateCommission`, `adCost`, `otherPlatformFees` | number | per order, entered manually because TikTok fee structures vary |
 | `salesTax` | number | per order |
-| `taxTreatment` | enum or `null` | `On top of price`, `Deducted from payout`, or `null`, meaning "use the default from Settings" |
+| `taxTreatment` | enum or `null` | `On top of price`, `Deducted from payout`, or `null`, meaning "use the client's default from Settings" |
 | `refund` | number | amount refunded to the buyer |
 | `notes` | string | |
+| `createdBy`, `updatedBy` | ObjectId → User | set by the server |
 
-All money fields default to 0. Use timestamps.
+All money fields default to 0. Use timestamps. Indexes: `{ clientId, orderId }` unique, `{ clientId, orderDate }`.
 
 ### Expense (business expense, not tied to one order)
 
 | Field | Type | Notes |
 |---|---|---|
-| `date` | string (date) | required, indexed |
+| `clientId` | ObjectId → Client | required |
+| `date` | string (date) | required |
 | `name` | string | required, for example "Kalodata Subscription" |
 | `category` | enum | `Product Research Tools`, `E-commerce Platform`, `Software Subscriptions`, `AI Tools`, `Virtual Assistant / Staff`, `Marketing`, `Internet & Utilities`, `Samples & Testing`, `Bank & Payment Fees`, `Other` |
 | `description` | string | |
@@ -77,22 +94,41 @@ All money fields default to 0. Use timestamps.
 | `currency` | string | 3-letter code |
 | `paymentStatus` | enum | `Paid`, `Pending` |
 | `paymentMethod` | enum | `Credit Card`, `Debit Card`, `Bank Transfer`, `PayPal`, `Payoneer`, `Cash`, `Other` |
+| `createdBy`, `updatedBy` | ObjectId → User | set by the server |
 
-### Settings (a single document, `key: "main"`)
+Index: `{ clientId, date }`.
+
+### Settings (one document per client, unique `clientId`)
 
 | Field | Default | Notes |
 |---|---|---|
-| `reportingCurrency` | `USD` | every report is converted to this |
+| `clientId` | | required, unique |
+| `reportingCurrency` | `USD` | every report for this client is converted to this; chosen when the client is created |
 | `lowMarginThreshold` | `0.15` | stored as a fraction |
 | `defaultTaxTreatment` | `On top of price` | |
 | `rates` | `{}` | Map: currency code → value of 1 unit in the reporting currency |
 | `ratesUpdatedAt` | `null` | string |
 
-Keep enum lists in one constants file (`src/lib/constants.ts`) and reuse them in the models, Zod schemas, forms and filters. Supported currency list for dropdowns: USD, GBP, EUR, PKR, AED, SAR, CAD, AUD, MYR, SGD, PHP, THB, VND, IDR, MXN. Users can add other codes in Settings.
+### User
+
+| Field | Notes |
+|---|---|
+| `name`, `email` | email unique, lowercase |
+| `passwordHash` | scrypt, `scrypt$N$r$p$salt$hash` |
+| `role` | `admin` (agency admin: every client) or `member` (only the clients in their memberships) |
+| `active` | deactivated users cannot sign in |
+| `sessionVersion` | bumped to sign the user out everywhere |
+| `failedLogins`, `lockedUntil`, `lastLoginAt` | lockout and display |
+
+### Membership (a member's access to one client)
+
+`{ userId, clientId, access: "edit" | "view" }`, unique on `{ userId, clientId }`. A member can belong to several clients with different access on each. Admins need no memberships.
+
+Keep enum lists in one constants file (`src/lib/constants.ts`) and reuse them in the models, Zod schemas, forms and filters. Supported currency list for dropdowns: USD, GBP, EUR, PKR, AED, SAR, CAD, AUD, MYR, SGD, PHP, THB, VND, IDR, MXN. Users can add other codes in a client's Settings.
 
 ## 4. Calculation rules (the most important part)
 
-Put all of this in pure functions in `src/lib/calc.ts`, with no database access, so it can be unit tested and reused on the client for live previews.
+These rules run per client, with that client's settings. Put all of this in pure functions in `src/lib/calc.ts`, with no database access, so it can be unit tested and reused on the client for live previews.
 
 ### Currency
 
@@ -188,11 +224,22 @@ With a $49 business expense in the same month: gross profit 23.18, net profit **
 
 ## 6. Pages and UI
 
+### Concepts
+
+- **Client**: one business / TikTok Shop. Each client's orders, expenses, settings and reports are completely separate.
+- **Agency admin** (`role: "admin"`): sees and manages every client, creates clients, manages all users and every client's settings.
+- **Member** (`role: "member"`): a team member or a client user (the shop owner). Sees only the clients they are members of, with `edit` or `view` access on each. Client users usually get `view` on their own client only.
+
 ### Layout
 
-- Left sidebar in dark navy (`#1F2A44`), collapsing to a top bar with a menu button on mobile.
-- Links: Dashboard (`/`), Orders, Business Expenses, Monthly Reports (`/reports`), Product Analysis (`/products`), Settings.
-- A "Sign out" button when sign-in is enabled. The sidebar is hidden on `/login`.
+- Left sidebar in dark navy (`#1F2A44`), collapsing to a top bar with a menu button on mobile. Hidden on `/login`.
+- At the top, a **client switcher**: the current client, with a searchable list of the clients the user can access. Switching keeps the same page (Dashboard, Orders, ...). Hidden when the user can access only one client.
+- The last client opened is remembered in a cookie (`tt_client`, holding the client id) and opened again after sign-in.
+- Client links for the current client: Dashboard (`/c/[slug]`), Orders, Business Expenses, Monthly Reports (`/reports`), Product Analysis (`/products`), and Settings (admins only).
+- Under the client links, admins see agency links: **All clients** (`/clients`), **Clients** (`/clients/manage`), **Users** (`/users`).
+- At the bottom: the user's name, role and **My account** (`/account`), and **Sign out**.
+- `/` sends admins to `/clients` and members to their last (or only) client. A member with no clients sees a short message.
+- The old single-shop URLs (`/orders`, `/expenses`, `/reports`, `/products`, `/settings`) redirect to the same page for the last client used.
 
 ### Design
 
@@ -201,8 +248,9 @@ With a $49 business expense in the same month: gross profit 23.18, net profit **
 - Money is shown in accounting style: `1,234.56`, negatives in parentheses `(1,234.56)`, and zero as `-`. Percentages have one decimal place. Use tabular numbers.
 - Dates display as "8 Nov 2026".
 - Tables have a navy header. Columns that are calculated automatically have a slate header, so the user can tell them apart from what they typed.
+- Every client page shows the client's name in its header.
 
-### Dashboard (`/`, server component)
+### Client dashboard (`/c/[slug]`, server component)
 
 - A period filter (client component) that updates the URL `?period=...&start=...&end=...`. The From and To fields appear only for Custom Range.
 - A "Showing ... to ..." line under the filter.
@@ -221,7 +269,7 @@ With a $49 business expense in the same month: gross profit 23.18, net profit **
   6. Order status distribution in the period (donut)
 - The monthly charts show the 12 months ending at the earlier of the period end and today.
 
-### Orders (`/orders`)
+### Orders (`/c/[slug]/orders`)
 
 - Table: date, order ID (monospace), product with SKU, status, payout, qty, price (with the currency code when it differs from the reporting currency), then calculated columns: revenue, product cost, TikTok fees, total costs, net profit, margin, ROI, basis badge, result badge, and Edit / Delete actions.
 - Rows tinted red for Loss, yellow for Low margin, and gray italic for Cancelled.
@@ -230,24 +278,25 @@ With a $49 business expense in the same month: gross profit 23.18, net profit **
 - "Add order" opens a modal form grouped into Order information, Units & price, Order costs, and TikTok fees, ads & tax.
   - The tax treatment dropdown includes "Default (current default)".
   - A **live preview** of revenue, order costs, net profit, margin and ROI uses `computeOrder` on the client while the user types.
+- Add, Import, Edit and Delete appear only for users with `edit` access (and admins).
 - Deleting asks for confirmation. Empty and loading states.
-- Duplicate order ID returns HTTP 409 "An order with this Order ID already exists".
+- Duplicate order ID within the client returns HTTP 409 "An order with this Order ID already exists for this client".
 
-### Business Expenses (`/expenses`)
+### Business Expenses (`/c/[slug]/expenses`)
 
 - A summary card in the reporting currency: this month, last month, this year, average per month over the last 12 full months, paid, pending, all time.
 - An "Expenses by category" table with columns for this month, this year and all time.
 - Filters: search, category, payment status.
-- A table with the amount in the original currency plus the converted amount. A modal form explains "add each charge on the date it was billed".
+- A table with the amount in the original currency plus the converted amount. A modal form explains "add each charge on the date it was billed". Edit controls only for `edit` access.
 
-### Monthly Reports (`/reports?year=2026`)
+### Monthly Reports (`/c/[slug]/reports?year=2026`)
 
 - Previous and next year arrows.
 - A table with one row per month and columns: orders, revenue, product costs, TikTok fees, taxes, shipping & packaging, advertising, other order costs, total order costs, gross profit, gross margin, business expenses, net profit, net margin, ROI, and net profit vs prior month (green or red).
 - A totals row: sums, with ratios recomputed from the totals rather than averaged.
 - A line chart of revenue, gross profit and net profit.
 
-### Product Analysis (`/products`)
+### Product Analysis (`/c/[slug]/products`)
 
 - Four insight cards:
   - Most profitable (top 5 with profit > 0)
@@ -256,53 +305,104 @@ With a $49 business expense in the same month: gross profit 23.18, net profit **
   - Best-selling (top 5 by units)
 - The full product table, with rows tinted for Loss and Low margin.
 
-### Settings (`/settings`)
+### Client Settings (`/c/[slug]/settings`, admins only)
 
-- Reporting currency, low-margin threshold (shown as a percentage, stored as a fraction), and default sales tax treatment, with a plain explanation of the two options.
+- Reporting currency, low-margin threshold (shown as a percentage, stored as a fraction), and default sales tax treatment, with a plain explanation of the two options. All per client.
 - Exchange rate grid: one input per currency, the value of 1 unit in the reporting currency, plus "Add currency".
-- A **"Load current rates"** button. It saves the reporting currency first, then calls `POST /api/settings/rates`, which fetches `https://open.er-api.com/v6/latest/{reportingCurrency}` and stores `1 / rate` for each currency. It shows when the rates were last loaded.
+- A **"Load current rates"** button. It saves the reporting currency first, then calls `POST /api/clients/[clientId]/settings/rates`, which fetches `https://open.er-api.com/v6/latest/{reportingCurrency}` and stores `1 / rate` for each currency. It shows when the rates were last loaded.
+- **People**: who has access to this client (admins are not listed: they see every client). Add an existing member, or invite a new one (name, email, generated temporary password with a Copy button, access). Change access between edit and view, and remove access.
+
+### All clients overview (`/clients`, admins only)
+
+- A table of all **active** clients for a period filter (This Month by default, same options as the dashboard): orders (counted), revenue, gross profit, business expenses, net profit, net margin, and date of the last order. Amounts are in each client's own reporting currency, with the currency code shown.
+- Rows red for a net loss, yellow for a net margin below that client's own threshold.
+- One totals row per currency. Amounts in different currencies are never added together.
+- Each row links to that client's dashboard.
+- Calculated with the existing `summarize()` per client, loading only the period's orders and expenses (indexes `{ clientId, orderDate }` and `{ clientId, date }`).
+
+### Clients (`/clients/manage`, admins only)
+
+- List of clients (archived ones behind a "Show archived" toggle): name, web address, TikTok Shop, marketplace, contact, status.
+- Create (name, web address generated from the name and editable, TikTok Shop name, marketplace, contact name and email, notes, reporting currency). Creating a client also creates its settings.
+- Edit, Archive, Unarchive. Archiving hides the client from members straight away.
+- Delete permanently: only for archived clients, and only after typing the client's name. Deletes its orders, expenses, settings and memberships.
+
+### Users (`/users`, admins only)
+
+- Table: name, email, role, the clients each member can access (with edit/view), status, last sign-in.
+- Add user (name, email, role, generated temporary password with Copy, and for members: tick clients and choose edit/view per client). Edit (same, except you cannot change your own role). Reset password, Deactivate / Reactivate, Delete.
+
+### My account (`/account`)
+
+- Name, email and role, and a change-password form (current password, new password twice).
 
 ### Login (`/login`)
 
-- A password field. After signing in, redirect to the `?next=` path, but only when it starts with `/` and not `//`.
+- Email and password. After signing in, redirect to the `?next=` path, but only when it starts with `/` and not `//`.
 
 ### Other
 
 - `error.tsx` with a friendly message and a "Try again" button.
-- `not-found.tsx`.
+- `not-found.tsx` (also shown for clients the user cannot access).
 - An app icon (`src/app/icon.svg`).
 
 ## 7. API routes (JSON)
 
 Wrap every route in a `handle()` helper that returns consistent errors:
 - 400 with readable Zod messages ("orderDate: Use a valid date (YYYY-MM-DD); orderId: Order ID is required")
-- 404 for unknown or invalid ObjectIds
-- 409 for duplicate order IDs (Mongo error 11000)
+- 401 when not signed in
+- 404 for unknown or invalid ObjectIds, **and for clients the user cannot access** (never 403 for those, so client names cannot be discovered)
+- 403 when the user can see the client but their access is too low (e.g. `view` trying to edit, a member opening Settings)
+- 409 for duplicates (Mongo error 11000): order ID within a client, user email, client web address
 - 500 otherwise, with details logged on the server only
 
-| Method | Route | Behaviour |
-|---|---|---|
-| POST | `/api/auth/login` | `{ password }`. Sets an httpOnly, SameSite=Lax cookie (`secure` in production), valid 30 days. On a wrong password, waits 500 ms and returns 401. |
-| POST | `/api/auth/logout` | Clears the cookie |
-| GET | `/api/orders?start&end` | `{ orders: OrderWithCalc[], settings }`, newest first |
-| POST | `/api/orders` | Create (Zod validated) |
-| PUT / DELETE | `/api/orders/[id]` | Update / delete |
-| POST | `/api/orders/import` | `{ csv }` → `{ inserted, skipped, errors[] }` |
-| GET / POST | `/api/expenses` | List with converted amounts / create |
-| PUT / DELETE | `/api/expenses/[id]` | Update / delete |
-| POST | `/api/expenses/import` | `{ csv }` → `{ inserted, skipped, errors[] }` |
-| GET / PUT | `/api/settings` | Read / save |
-| POST | `/api/settings/rates` | Load live exchange rates |
+`[clientId]` is the client's ObjectId (its slug is also accepted). Access: **view** = any member of the client or admin; **edit** = `edit` member or admin; **admin** = agency admin.
 
-Database access lives in `src/lib/repo.ts` (marked `server-only`). It converts Mongo documents to plain objects with `id: string` and no `_id`, `__v` or timestamps. The Mongoose connection is cached on `globalThis` for hot reload and serverless reuse.
+| Method | Route | Access | Behaviour |
+|---|---|---|---|
+| POST | `/api/auth/login` | anyone | `{ email, password }`. Sets an httpOnly, SameSite=Lax cookie (`secure` in production), valid 30 days. Wrong details: waits 500 ms, 401. Locked: 429. Deactivated: 403. |
+| POST | `/api/auth/logout` | anyone | Clears the cookie |
+| PUT | `/api/account/password` | signed in | `{ currentPassword, newPassword }`; signs other devices out |
+| GET | `/api/clients` | signed in | Clients the user can open, with their access |
+| POST | `/api/clients` | admin | Create a client and its settings (`reportingCurrency` on the form) |
+| GET / PUT / DELETE | `/api/clients/[clientId]` | view / admin / admin | Read; edit or archive (`status`); delete an archived client with `{ confirmName }` |
+| GET | `/api/clients/[clientId]/orders?start&end` | view | `{ orders: OrderWithCalc[], settings }`, newest first |
+| POST | `/api/clients/[clientId]/orders` | edit | Create (Zod validated) |
+| PUT / DELETE | `/api/clients/[clientId]/orders/[id]` | edit | Update / delete, matching `{ _id, clientId }` |
+| POST | `/api/clients/[clientId]/orders/import` | edit | `{ csv }` → `{ inserted, skipped, errors[] }` |
+| GET / POST | `/api/clients/[clientId]/expenses` | view / edit | List with converted amounts / create |
+| PUT / DELETE | `/api/clients/[clientId]/expenses/[id]` | edit | Update / delete, matching `{ _id, clientId }` |
+| POST | `/api/clients/[clientId]/expenses/import` | edit | `{ csv }` → `{ inserted, skipped, errors[] }` |
+| GET / PUT | `/api/clients/[clientId]/settings` | view / admin | Read / save |
+| POST | `/api/clients/[clientId]/settings/rates` | admin | Load live exchange rates |
+| GET / POST | `/api/clients/[clientId]/people` | admin | List members; add `{ userId, access }` or invite `{ name, email, password, access }` |
+| PUT / DELETE | `/api/clients/[clientId]/people/[userId]` | admin | Change `{ access }` / remove access |
+| GET / POST | `/api/users` | admin | List (with memberships) / create `{ name, email, password, role, memberships? }` |
+| PUT / DELETE | `/api/users/[id]` | admin | Update (name, email, role, active, password, memberships) / delete |
 
-## 8. Sign-in (`src/lib/auth.ts` and `src/proxy.ts`)
+Database access:
 
-- When `APP_PASSWORD` is set, `proxy.ts` protects every route except `/login`, `/api/auth/login` and static assets.
+- `src/lib/repo.ts` (marked `server-only`): orders, expenses and settings. **Every function takes `clientId` as its required first argument and every query filters on it.** Update and delete use `findOneAndUpdate({ _id, clientId })` / `findOneAndDelete({ _id, clientId })`. It converts Mongo documents to plain objects with `id: string` and no `_id`, `__v`, timestamps, `clientId`, `createdBy` or `updatedBy`.
+- `src/lib/clients.ts`: clients and memberships.
+- `src/lib/data.ts`: `loadAll(clientId)` for the report pages, and `loadOverview(start, end)`, the **only** code that reads orders and expenses across clients. It returns per-client totals only.
+- The Mongoose connection is cached on `globalThis` for hot reload and serverless reuse.
+
+## 8. Sign-in and access (`src/lib/auth.ts`, `src/lib/session.ts`, `src/proxy.ts`)
+
+- Sign-in is always by user account; there is no public sign-up. Only users an admin creates can sign in.
+- `proxy.ts` protects every route except `/login`, `/api/auth/login`, `/api/auth/logout` and static assets. It only checks that the cookie is validly signed and not expired:
   - Pages without a valid session redirect to `/login?next=...`.
   - API routes without a valid session return 401 JSON.
-- Session token: `"<expiryMs>.<hex HMAC-SHA256(expiryMs, SESSION_SECRET)>"`, built with **Web Crypto** (`crypto.subtle`) so it runs inside the proxy.
-- Compare signatures in constant time. Compare passwords by comparing HMACs of both values.
+- Session token: `"<userId>.<sessionVersion>.<expiryMs>.<hex HMAC-SHA256(of the rest, SESSION_SECRET)>"`, built with **Web Crypto** (`crypto.subtle`) so it runs inside the proxy. Compare signatures in constant time.
+- Every page and route then loads the user from the database (`getCurrentUser`, cached per request only): the user must exist, be active, and have the same `sessionVersion` as the token. So deactivation, password change and password reset take effect on the next request.
+- **One access helper for everything that belongs to a client:** `requireClientAccess(user, clientSlugOrId, "view" | "edit" | "admin")`. Every client page and API route calls it (through `requireClientApi` / `requireClientPage`). It returns `{ client, access }` or:
+  - **404** when the client does not exist, the user has no membership, or the client is archived and the user is not an admin;
+  - **403** when the user can see the client but their access is too low.
+  It reads the client and membership fresh on every request (no cached access).
+- Archived clients are read-only for everyone except admins, and hidden from members entirely.
+- Passwords: scrypt with a random salt. Unknown emails still run a hash so timing reveals nothing. After 5 wrong passwords, the account is locked for 15 minutes.
+- The first admin is created from `ADMIN_EMAIL` / `ADMIN_PASSWORD` on the first matching sign-in while no admin exists. `npm run create-admin -- email "password" "Name"` creates or resets an admin if locked out.
+- There is always at least one active admin. Users cannot change their own role, deactivate or delete themselves.
 
 ## 9. Importing from the Google Sheet
 
@@ -319,13 +419,15 @@ The user already has a Google Sheet version with an "Orders" tab and a "Business
 - Dates: accept `2026-11-08`, `8 Nov 2026`, and `08/11/2026` (day first).
 - Match enums case-insensitively, with sensible fallbacks.
 - Skip example rows: order IDs starting with "EXAMPLE", or descriptions containing "Example row". Skip blank rows. Collect per-row errors instead of failing the whole import.
-- **Deduplicate**: skip orders whose Order ID already exists (or repeats within the file). Skip expenses with the same date + name (case-insensitive) + amount. Importing twice must be safe.
+- **Deduplicate**: skip orders whose Order ID already exists in the same client (or repeats within the file). Skip expenses with the same date + name (case-insensitive) + amount in the same client. Imports always go into the client in the URL. Importing twice must be safe.
 - The import modal explains: open the tab → File → Download → CSV → pick the file. It then shows how many rows were imported and skipped, plus any row errors.
 
 ## 10. Scripts, tests and docs
 
 - `package.json` scripts: `dev`, `build`, `start`, `typecheck` (`tsc --noEmit`), `test` (`vitest run`), `seed` (`tsx scripts/seed.ts`).
-- `scripts/seed.ts` reads `.env.local` and upserts about 6 example orders (including a returned and a cancelled one) and 3 expenses dated relative to today, all marked "Example".
+- `migrate:clients` (`tsx scripts/migrate-clients.ts`, with `--dry-run`): idempotent move from the single-shop database: create "My Shop" when there is single-shop data or no client (old data never goes into another existing client unless named with `--client`), give every order and expense a client, give default settings to any client without settings, turn the old `key: "main"` settings into that client's settings, turn old `editor`/`viewer` users into members, drop the old unique `orderId` index (Mongoose never drops indexes) and create `{ clientId, orderId }` and the other new indexes.
+- `create-admin` (`tsx scripts/create-admin.ts email password [name]`): create or reset an admin.
+- `scripts/seed.ts <client-slug>` reads `.env.local` and upserts about 6 example orders (including a returned and a cancelled one) and 3 expenses dated relative to today, all marked "Example", into that client. `seed:demo <client-slug> [--clear]` loads a 12-month demo dataset.
 - Tests (Vitest) must cover at least:
   - The reference case in section 4
   - Both tax treatments and the default override
@@ -341,20 +443,23 @@ The user already has a Google Sheet version with an "Orders" tab and a "Business
   - Product grouping and sorting
   - Every period type, leap-year month end, invalid dates, and time zone handling for "today"
   - The CSV parser, number and date parsing, and both importers, including banner rows and skipped example rows
+  - Session tokens, password hashing and access levels
+  - Client isolation through the real route handlers: a member of client A gets 404 reading, editing, deleting or importing into client B, including with B's record ids; membership access levels; archived clients; order IDs unique per client
+  - The migration on an empty and a populated database (dry run changes nothing; a second run changes nothing)
+  - Database tests use `mongodb-memory-server` (a local `mongod` when installed), never Atlas
 - `README.md`: features, the calculation rules in plain language, MongoDB Atlas setup, environment variables, local run, Vercel deployment (allow `0.0.0.0/0` in Atlas), importing from the Google Sheet, the API table, and the project layout.
 - `.gitignore`: node_modules, .next, .env, .env.local, tsbuildinfo, next-env.d.ts.
 
 ## 11. Definition of done
 
 1. `npm test`, `npm run typecheck` and `npm run build` all pass with no errors.
-2. With a real `MONGODB_URI`, you can add, edit and delete orders and expenses, the dashboard and reports update, and the reference case shows 23.18 profit and (25.82) net profit after a $49 expense.
-3. Sign-in works when `APP_PASSWORD` is set, and every page and API route is blocked without it.
+2. With a real `MONGODB_URI`, you can add, edit and delete orders and expenses in a client, the dashboard and reports update, and the reference case shows 23.18 profit and (25.82) net profit after a $49 expense inside a client.
+3. Every page and API route needs a signed-in user, and each user sees only the clients they may access.
 4. Importing the Google Sheet CSVs works, and importing the same file twice adds nothing.
 5. The layout works on a phone (sidebar collapses, tables scroll horizontally).
 
 ## 12. Ideas for later (do not build unless asked)
 
-- Per-user accounts and multiple shops
 - Automatic order sync from the TikTok Shop Seller API
 - CSV or Excel export of every table
 - Recurring expense templates that create the monthly row automatically

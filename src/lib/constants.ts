@@ -62,15 +62,34 @@ export const CURRENCIES = [
   "MYR", "SGD", "PHP", "THB", "VND", "IDR", "MXN",
 ] as const;
 
-/** Account roles, from most to least access. "admin" manages users and settings. */
-export const ROLES = ["admin", "editor", "viewer"] as const;
+/** Global account roles. Admins (the agency) see every client; members only the clients they are given. */
+export const ROLES = ["admin", "member"] as const;
 export type Role = (typeof ROLES)[number];
 export const ROLE_LABELS: Record<Role, string> = {
-  admin: "Admin",
-  editor: "User · can add & edit",
-  viewer: "User · view only",
+  admin: "Agency admin",
+  member: "Member",
 };
-const ROLE_RANK: Record<Role, number> = { viewer: 0, editor: 1, admin: 2 };
-/** True when `role` has at least the access of `needed`. */
-export const hasRole = (role: Role, needed: Role) => ROLE_RANK[role] >= ROLE_RANK[needed];
+
+/** Access a member has on one client. */
+export const CLIENT_ACCESS = ["edit", "view"] as const;
+export type ClientAccess = (typeof CLIENT_ACCESS)[number];
+export const ACCESS_LABELS: Record<ClientAccess, string> = {
+  edit: "Can add & edit",
+  view: "View only",
+};
+
+/** What a page or route needs on a client. "admin" means an agency admin (client settings, people). */
+export type ClientLevel = "view" | "edit" | "admin";
+/** The access a user effectively has on a client. */
+export type EffectiveAccess = ClientAccess | "admin";
+const LEVEL_RANK: Record<ClientLevel, number> = { view: 0, edit: 1, admin: 2 };
+/** True when `have` is at least `need`. */
+export const meetsLevel = (have: EffectiveAccess, need: ClientLevel) => LEVEL_RANK[have] >= LEVEL_RANK[need];
+
+export const CLIENT_STATUSES = ["Active", "Archived"] as const;
+export type ClientStatus = (typeof CLIENT_STATUSES)[number];
+
 export const MIN_PASSWORD_LENGTH = 8;
+
+/** Cookie remembering the last client opened (its id). A preference only: access is always checked. */
+export const LAST_CLIENT_COOKIE = "tt_client";

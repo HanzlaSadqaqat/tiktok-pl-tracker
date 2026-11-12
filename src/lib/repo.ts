@@ -1,121 +1,148 @@
 import "server-only";
 import { connectDb } from "./db";
+import { DEFAULT_SETTINGS } from "./defaults";
 import { ExpenseModel, OrderModel, SettingsModel } from "./models";
 import type { AppSettings, Expense, ExpenseInput, Order, OrderInput } from "./types";
 
-const DEFAULT_SETTINGS: AppSettings = {
-  reportingCurrency: "USD",
-  lowMarginThreshold: 0.15,
-  defaultTaxTreatment: "On top of price",
-  rates: {},
-  ratesUpdatedAt: null,
-};
+/**
+ * Database access for one client's orders, expenses and settings.
+ *
+ * SECURITY: every function takes `clientId` as its first argument and every query filters on it.
+ * Updates and deletes match `{ _id, clientId }`, so an id from client A can never touch client B.
+ * Callers must get `clientId` from `requireClientAccess()` (session.ts), never straight from a request.
+ */
+
+export { DEFAULT_SETTINGS };
 
 type Lean<T> = T & { _id: { toString(): string } };
 
-/** Strips Mongo bookkeeping fields and exposes the id as a string. */
+/** Strips Mongo bookkeeping and ownership fields and exposes the id as a string. */
 function clean<T>(d: Lean<T>): T & { id: string } {
-  const { _id, __v, createdAt, updatedAt, ...rest } = d as Lean<T> & Record<string, unknown>;
-  void __v; void createdAt; void updatedAt;
+  const { _id, __v, createdAt, updatedAt, clientId, createdBy, updatedBy, ...rest } = d as Lean<T> & Record<string, unknown>;
+  void __v; void createdAt; void updatedAt; void clientId; void createdBy; void updatedBy;
   return { id: _id.toString(), ...(rest as T) };
 }
 
-const toOrder = (d: Lean<OrderInput>): Order => {
-  const o = clean(d);
+const toOrder = (d: unknown): Order => {
+  const o = clean(d as Lean<OrderInput>);
   return { ...o, taxTreatment: o.taxTreatment ?? null };
 };
-const toExpense = (d: Lean<ExpenseInput>): Expense => clean(d);
+const toExpense = (d: unknown): Expense => clean(d as Lean<ExpenseInput>);
 
-export async function getSettings(): Promise<AppSettings> {
-  await connectDb();
-  const doc = await SettingsModel.findOne({ key: "main" }).lean();
+const dateRange = (filter: { start?: string; end?: string }) =>
+  filter.start || filter.end ? { ...(filter.start && { $gte: filter.start }), ...(filter.end && { $lte: filter.end }) } : undefined;
+
+// ---------------------------------------------------------------- Settings
+
+export function settingsFromDoc(doc: Record<string, unknown> | null): AppSettings {
   if (!doc) return { ...DEFAULT_SETTINGS };
-  const rates = doc.rates instanceof Map ? Object.fromEntries(doc.rates) : ((doc.rates as unknown as Record<string, number>) ?? {});
+  const rates = doc.rates instanceof Map ? Object.fromEntries(doc.rates) : ((doc.rates as Record<string, number>) ?? {});
   return {
-    reportingCurrency: doc.reportingCurrency,
-    lowMarginThreshold: doc.lowMarginThreshold,
-    defaultTaxTreatment: doc.defaultTaxTreatment,
+    reportingCurrency: (doc.reportingCurrency as string) ?? DEFAULT_SETTINGS.reportingCurrency,
+    lowMarginThreshold: (doc.lowMarginThreshold as number) ?? DEFAULT_SETTINGS.lowMarginThreshold,
+    defaultTaxTreatment: (doc.defaultTaxTreatment as AppSettings["defaultTaxTreatment"]) ?? DEFAULT_SETTINGS.defaultTaxTreatment,
     rates,
-    ratesUpdatedAt: doc.ratesUpdatedAt ?? null,
+    ratesUpdatedAt: (doc.ratesUpdatedAt as string | null) ?? null,
   };
 }
 
-export async function saveSettings(s: Partial<AppSettings>): Promise<AppSettings> {
+export async function getSettings(clientId: string): Promise<AppSettings> {
   await connectDb();
-  await SettingsModel.updateOne({ key: "main" }, { $set: s }, { upsert: true });
-  return getSettings();
+  return settingsFromDoc(await SettingsModel.findOne({ clientId }).lean());
 }
 
-export async function listOrders(filter: { start?: string; end?: string } = {}): Promise<Order[]> {
+export async function saveSettings(clientId: string, s: Partial<AppSettings>): Promise<AppSettings> {
   await connectDb();
-  const q: Record<string, unknown> = {};
-  if (filter.start || filter.end) q.orderDate = { ...(filter.start && { $gte: filter.start }), ...(filter.end && { $lte: filter.end }) };
-  const docs = await OrderModel.find(q).sort({ orderDate: -1, createdAt: -1 }).lean();
-  return docs.map((d) => toOrder(d as Lean<OrderInput>));
+  await SettingsModel.updateOne({ clientId }, { $set: s, $setOnInsert: { clientId } }, { upsert: true, runValidators: true });
+  return getSettings(clientId);
 }
 
-export async function createOrder(input: OrderInput): Promise<Order> {
+// ---------------------------------------------------------------- Orders
+
+export async function listOrders(clientId: string, filter: { start?: string; end?: string } = {}): Promise<Order[]> {
   await connectDb();
-  const doc = await OrderModel.create(input);
-  return toOrder(doc.toObject() as Lean<OrderInput>);
+  const range = dateRange(filter);
+  const docs = await OrderModel.find({ clientId, ...(range && { orderDate: range }) }).sort({ orderDate: -1, createdAt: -1 }).lean();
+  return docs.map(toOrder);
 }
 
-export async function updateOrder(id: string, input: OrderInput): Promise<Order | null> {
+export async function createOrder(clientId: string, userId: string | null, input: OrderInput): Promise<Order> {
   await connectDb();
-  const doc = await OrderModel.findByIdAndUpdate(id, input, { new: true, runValidators: true }).lean();
-  return doc ? toOrder(doc as Lean<OrderInput>) : null;
+  const doc = await OrderModel.create({ ...input, clientId, createdBy: userId, updatedBy: userId });
+  return toOrder(doc.toObject());
 }
 
-export async function deleteOrder(id: string): Promise<boolean> {
+export async function updateOrder(clientId: string, userId: string | null, id: string, input: OrderInput): Promise<Order | null> {
   await connectDb();
-  const res = await OrderModel.findByIdAndDelete(id);
-  return !!res;
+  const doc = await OrderModel.findOneAndUpdate(
+    { _id: id, clientId },
+    { $set: { ...input, updatedBy: userId } },
+    { returnDocument: "after", runValidators: true },
+  ).lean();
+  return doc ? toOrder(doc) : null;
 }
 
-/** Inserts orders, skipping any whose Order ID already exists. */
-export async function importOrders(inputs: OrderInput[]): Promise<{ inserted: number; skipped: number }> {
+export async function deleteOrder(clientId: string, id: string): Promise<boolean> {
+  await connectDb();
+  return !!(await OrderModel.findOneAndDelete({ _id: id, clientId }));
+}
+
+/** Inserts orders, skipping any whose Order ID already exists for this client (or repeats in the file). */
+export async function importOrders(clientId: string, userId: string | null, inputs: OrderInput[]): Promise<{ inserted: number; skipped: number }> {
   await connectDb();
   if (!inputs.length) return { inserted: 0, skipped: 0 };
   const existing = new Set(
-    (await OrderModel.find({ orderId: { $in: inputs.map((i) => i.orderId) } }, { orderId: 1 }).lean()).map((d) => d.orderId),
+    (await OrderModel.find({ clientId, orderId: { $in: inputs.map((i) => i.orderId) } }, { orderId: 1 }).lean()).map((d) => d.orderId),
   );
   const fresh = inputs.filter((i, idx) => !existing.has(i.orderId) && inputs.findIndex((j) => j.orderId === i.orderId) === idx);
-  if (fresh.length) await OrderModel.insertMany(fresh, { ordered: false });
+  if (fresh.length) {
+    await OrderModel.insertMany(
+      fresh.map((o) => ({ ...o, clientId, createdBy: userId, updatedBy: userId })),
+      { ordered: false },
+    );
+  }
   return { inserted: fresh.length, skipped: inputs.length - fresh.length };
 }
 
-export async function listExpenses(filter: { start?: string; end?: string } = {}): Promise<Expense[]> {
+// ---------------------------------------------------------------- Business expenses
+
+export async function listExpenses(clientId: string, filter: { start?: string; end?: string } = {}): Promise<Expense[]> {
   await connectDb();
-  const q: Record<string, unknown> = {};
-  if (filter.start || filter.end) q.date = { ...(filter.start && { $gte: filter.start }), ...(filter.end && { $lte: filter.end }) };
-  const docs = await ExpenseModel.find(q).sort({ date: -1, createdAt: -1 }).lean();
-  return docs.map((d) => toExpense(d as Lean<ExpenseInput>));
+  const range = dateRange(filter);
+  const docs = await ExpenseModel.find({ clientId, ...(range && { date: range }) }).sort({ date: -1, createdAt: -1 }).lean();
+  return docs.map(toExpense);
 }
 
-export async function createExpense(input: ExpenseInput): Promise<Expense> {
+export async function createExpense(clientId: string, userId: string | null, input: ExpenseInput): Promise<Expense> {
   await connectDb();
-  const doc = await ExpenseModel.create(input);
-  return toExpense(doc.toObject() as Lean<ExpenseInput>);
+  const doc = await ExpenseModel.create({ ...input, clientId, createdBy: userId, updatedBy: userId });
+  return toExpense(doc.toObject());
 }
 
-export async function updateExpense(id: string, input: ExpenseInput): Promise<Expense | null> {
+export async function updateExpense(clientId: string, userId: string | null, id: string, input: ExpenseInput): Promise<Expense | null> {
   await connectDb();
-  const doc = await ExpenseModel.findByIdAndUpdate(id, input, { new: true, runValidators: true }).lean();
-  return doc ? toExpense(doc as Lean<ExpenseInput>) : null;
+  const doc = await ExpenseModel.findOneAndUpdate(
+    { _id: id, clientId },
+    { $set: { ...input, updatedBy: userId } },
+    { returnDocument: "after", runValidators: true },
+  ).lean();
+  return doc ? toExpense(doc) : null;
 }
 
-export async function deleteExpense(id: string): Promise<boolean> {
+export async function deleteExpense(clientId: string, id: string): Promise<boolean> {
   await connectDb();
-  const res = await ExpenseModel.findByIdAndDelete(id);
-  return !!res;
+  return !!(await ExpenseModel.findOneAndDelete({ _id: id, clientId }));
 }
 
-/** Inserts expenses, skipping rows with the same date, name and amount as an existing one. */
-export async function importExpenses(inputs: ExpenseInput[]): Promise<{ inserted: number; skipped: number }> {
+/** Inserts expenses, skipping rows with the same date, name and amount as an existing one for this client. */
+export async function importExpenses(clientId: string, userId: string | null, inputs: ExpenseInput[]): Promise<{ inserted: number; skipped: number }> {
   await connectDb();
   if (!inputs.length) return { inserted: 0, skipped: 0 };
   const key = (e: Pick<ExpenseInput, "date" | "name" | "amount">) => `${e.date}|${e.name.toLowerCase()}|${e.amount}`;
-  const existing = await ExpenseModel.find({ date: { $in: [...new Set(inputs.map((i) => i.date))] } }, { date: 1, name: 1, amount: 1 }).lean();
+  const existing = await ExpenseModel.find(
+    { clientId, date: { $in: [...new Set(inputs.map((i) => i.date))] } },
+    { date: 1, name: 1, amount: 1 },
+  ).lean();
   const seen = new Set(existing.map(key));
   const fresh = inputs.filter((i) => {
     const k = key(i);
@@ -123,6 +150,11 @@ export async function importExpenses(inputs: ExpenseInput[]): Promise<{ inserted
     seen.add(k);
     return true;
   });
-  if (fresh.length) await ExpenseModel.insertMany(fresh, { ordered: false });
+  if (fresh.length) {
+    await ExpenseModel.insertMany(
+      fresh.map((e) => ({ ...e, clientId, createdBy: userId, updatedBy: userId })),
+      { ordered: false },
+    );
+  }
   return { inserted: fresh.length, skipped: inputs.length - fresh.length };
 }
